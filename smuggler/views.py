@@ -8,6 +8,7 @@
 import os.path
 from datetime import datetime
 import tempfile
+from django.conf import settings as dj_settings
 from django.contrib.admin.helpers import AdminForm
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
 from django.core.management.base import CommandError
@@ -23,6 +24,29 @@ from smuggler.forms import ImportForm
 from smuggler import settings
 from smuggler.utils import (save_uploaded_file_on_disk, serialize_to_response,
                             load_fixtures)
+
+
+def save_file_redirect(request, app_label=[], exclude=[], filename_prefix=None):
+    """Utility function that dumps the given app/model to an HttpResponse.
+    """
+    try:
+        filename = '%s.%s' % (datetime.now().isoformat(),
+                              settings.SMUGGLER_FORMAT)
+        if filename_prefix:
+            filename = '%s_%s' % (filename_prefix, filename)
+        if not isinstance(app_label, list):
+            app_label = [app_label]
+        response = serialize_to_response(app_label, exclude)
+        response['Content-Disposition'] = 'attachment; filename=%s' % filename
+        with open(os.path.join(dj_settings.BASE_DIR, dj_settings.SMUGGLER_FIXTURE_DIR + '/' + filename), 'w+') as file:
+            file.write(response.content)
+        messages.info(request, 'Backup done.')
+        return HttpResponseRedirect('/admin')
+    except CommandError as e:
+        messages.error(
+            request,
+            _('An exception occurred while dumping data: %s') % force_text(e))
+    return HttpResponseRedirect(request.build_absolute_uri().split('dump')[0])
 
 
 def dump_to_response(request, app_label=[], exclude=[], filename_prefix=None):
@@ -61,8 +85,8 @@ def dump_data(request):
     app_label = request.GET.get('app_label', [])
     if app_label:
         app_label = app_label.split(',')
-    return dump_to_response(request, app_label=app_label,
-                            exclude=settings.SMUGGLER_EXCLUDE_LIST)
+    return save_file_redirect(request, app_label=app_label,
+                              exclude=settings.SMUGGLER_EXCLUDE_LIST)
 
 
 @user_passes_test(is_superuser)
